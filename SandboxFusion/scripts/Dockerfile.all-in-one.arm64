@@ -180,15 +180,39 @@ RUN echo ".NET cache skipped due to ARM64 MSBuild issues"
 RUN echo "Lean build skipped due to ARM64 emulation issues"
 
 COPY ./runtime/python ./runtime/python
-# 安装Qt开发工具以支持PyQt5在ARM64上的编译
-RUN apt-get update && apt-get install -y qt5-qmake qtbase5-dev qtbase5-dev-tools \
-    && cd ./runtime/python && sed -i 's/\r$//' install-python-runtime.sh && chmod +x install-python-runtime.sh \
-    && if [ "$USE_CHINA_MIRRORS" = "true" ]; then \
-        timeout 1800 bash install-python-runtime.sh; \
-    else \
-        timeout 1800 bash install-python-runtime.sh us; \
-    fi \
-    || echo "Python runtime installation timed out or failed, continuing..."
+# 安装Qt开发工具以支持PyQt5在ARM64上的编译  
+RUN apt-get update && apt-get install -y qt5-qmake qtbase5-dev qtbase5-dev-tools
+# 直接在Dockerfile中安装Python依赖，避免脚本内的镜像源问题
+RUN cd ./runtime/python \
+    && rm -f ~/.condarc \
+    && conda create -n sandbox-runtime -y python=3.10 \
+    && echo "source activate sandbox-runtime" >> ~/.bashrc
+
+# 分步安装Python包，避免PyQt5等重型包导致超时
+RUN /bin/bash -c "source activate sandbox-runtime && \
+    pip config set global.index-url https://pypi.org/simple/ && \
+    pip config set global.trusted-host pypi.org && \
+    echo 'Installing basic Python packages...' && \
+    pip install --no-cache-dir --prefer-binary numpy pandas matplotlib requests Flask Django pytest --timeout 300"
+
+# 安装编译型包，增加超时时间
+RUN /bin/bash -c "source activate sandbox-runtime && \
+    echo 'Installing compiled packages (may take longer on ARM64)...' && \
+    pip install --no-cache-dir --prefer-binary PyQt5 opencv-python scipy scikit-learn --timeout 600 \
+    || echo 'Some compiled packages failed, continuing...'"
+
+# 安装其余包
+RUN /bin/bash -c "source activate sandbox-runtime && \
+    echo 'Installing remaining packages...' && \
+    pip install --no-cache-dir --prefer-binary -r ./requirements.txt --ignore-requires-python --timeout 300 \
+    || echo 'Some packages failed, continuing...'"
+
+# 下载NLTK数据
+RUN /bin/bash -c "source activate sandbox-runtime && \
+    python -c 'import nltk; nltk.download(\"punkt\")' && \
+    python -c 'import nltk; nltk.download(\"stopwords\")' && \
+    pip cache purge && conda clean --all -y" \
+    || echo "NLTK data download failed, continuing..."
 # fix pyqt error, see https://github.com/NVlabs/instant-ngp/discussions/300
 ENV QT_QPA_PLATFORM=offscreen
 ENV OMP_NUM_THREADS=2
