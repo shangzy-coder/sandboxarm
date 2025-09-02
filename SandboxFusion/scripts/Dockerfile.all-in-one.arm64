@@ -9,6 +9,8 @@ RUN sed -i 's/\r$//' ./scripts/tuna-apt.sh && chmod +x ./scripts/tuna-apt.sh \
     autoconf gperf flex bison \
     # bash scripting utils
     bc \
+    # opam dependencies for ARM64
+    bubblewrap \
     && mkdir -p /workspace/download
 
 # python 3.11 & poetry
@@ -93,12 +95,16 @@ RUN curl -o /workspace/download/zig.tar.xz -SL https://ziglang.org/download/0.11
     && mv /usr/local/zig-linux-aarch64-0.11.0 /usr/local/zig
 ENV PATH=/usr/local/zig:$PATH
 
-# ocaml
+# ocaml - 容错安装，ARM64上可能有沙箱问题
 RUN curl -o /workspace/download/opam.sh -SL https://raw.githubusercontent.com/ocaml/opam/master/shell/install.sh \
     && sh /workspace/download/opam.sh \
-    && opam init -y \
+    && opam init -y --disable-sandboxing \
     && eval $(opam env) \
-    && opam install -y dune utop
+    && opam install -y dune utop \
+    && echo "OCaml/OPAM installed successfully" \
+    || echo "OCaml/OPAM installation failed, continuing..."
+# 只有OPAM安装成功时才设置环境
+RUN if [ -f "/root/.opam/default/bin/ocaml" ]; then echo 'eval $(opam env)' >> /root/.bashrc; fi
 
 # haskell
 RUN curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh \
