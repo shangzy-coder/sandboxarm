@@ -16,8 +16,11 @@ COPY ./scripts/install-miniconda.sh ./scripts/install-miniconda.sh
 RUN sed -i 's/\r$//' ./scripts/install-miniconda.sh && chmod +x ./scripts/install-miniconda.sh \
     && bash ./scripts/install-miniconda.sh 3.11
 ENV PATH="/root/miniconda3/bin:${PATH}"
-RUN wget https://veml.tos-cn-beijing.volces.com/condarc -O ~/.condarc && \
-    pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
+# 使用国际镜像源，适用于GitHub Actions
+RUN echo "channels:" > ~/.condarc && \
+    echo "  - defaults" >> ~/.condarc && \
+    echo "  - conda-forge" >> ~/.condarc && \
+    pip config set global.index-url https://pypi.org/simple/
 RUN curl -sSL https://install.python-poetry.org | POETRY_VERSION=1.7.0 python3 -
 ENV PATH=/root/.local/bin:$PATH
 
