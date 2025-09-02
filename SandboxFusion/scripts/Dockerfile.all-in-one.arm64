@@ -33,11 +33,9 @@ ENV PATH=/usr/local/go/bin:$PATH
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs
 
-# dotnet 8.0
-RUN wget https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb \
-    && dpkg -i packages-microsoft-prod.deb \
-    && apt-get update \
-    && apt-get install -y dotnet-sdk-8.0
+# dotnet 8.0 - 使用官方安装脚本，更适合ARM64
+RUN curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 8.0 --install-dir /usr/share/dotnet \
+    && ln -s /usr/share/dotnet/dotnet /usr/bin/dotnet
 
 # lean 4
 RUN curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y
@@ -139,13 +137,12 @@ RUN cd /root/sandbox/runtime/node && npm ci && \
     apt-get update -y && apt-get install -y fontconfig locales gconf-service libasound2 libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgcc1 libgconf-2-4 libgdk-pixbuf2.0-0 libglib2.0-0 libgtk-3-0 libnspr4 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 ca-certificates fonts-liberation libappindicator1 libnss3 lsb-release xdg-utils libgbm-dev
 
 # 跳过.NET缓存，因为ARM64上MSBuild有问题
-# RUN dotnet new console -o /tmp/dotnet && dotnet run --project /tmp/dotnet
-RUN echo ".NET cache skipped due to ARM64 MSBuild issues"
+# 容错安装.NET缓存，ARM64上可能有MSBuild问题
+RUN dotnet new console -o /tmp/dotnet && dotnet run --project /tmp/dotnet || echo ".NET cache failed, continuing..."
 
 # 跳过Lean构建，避免ARM64模拟问题
-# COPY ./runtime/lean /root/sandbox/runtime/lean
-# RUN cd /root/sandbox/runtime/lean && lake build
-RUN echo "Lean build skipped due to ARM64 emulation issues"
+COPY ./runtime/lean /root/sandbox/runtime/lean
+RUN cd /root/sandbox/runtime/lean && lake build
 
 COPY ./runtime/python ./runtime/python
 # 安装Qt开发工具以支持PyQt5在ARM64上的编译
