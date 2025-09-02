@@ -1,0 +1,105 @@
+name: Build SandboxFusion ARM64
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'SandboxFusion/**'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'SandboxFusion/**'
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build-base:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Build base image
+        working-directory: ./SandboxFusion
+        run: |
+          docker buildx build \
+            --platform linux/arm64 \
+            -f scripts/Dockerfile.base.arm64 \
+            -t sandboxfusion-base-arm64:latest \
+            . --load
+
+      - name: Test base image
+        run: |
+          docker run --platform linux/arm64 --rm sandboxfusion-base-arm64:latest echo "Base image works!"
+          docker run --platform linux/arm64 --rm sandboxfusion-base-arm64:latest go version
+
+      - name: Save base image
+        run: |
+          docker save sandboxfusion-base-arm64:latest | gzip > sandboxfusion-base-arm64.tar.gz
+
+      - name: Upload base image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandboxfusion-base-arm64
+          path: sandboxfusion-base-arm64.tar.gz
+          retention-days: 1
+
+  build-server:
+    needs: build-base
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Download base image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sandboxfusion-base-arm64
+
+      - name: Load base image
+        run: |
+          docker load < sandboxfusion-base-arm64.tar.gz
+
+      - name: Build server image
+        working-directory: ./SandboxFusion
+        run: |
+          docker buildx build \
+            --platform linux/arm64 \
+            -f scripts/Dockerfile.server.arm64 \
+            -t sandboxfusion-server-arm64:latest \
+            . --load
+
+      - name: Test server image
+        run: |
+          docker run --platform linux/arm64 --rm sandboxfusion-server-arm64:latest echo "Server image works!"
+
+      - name: Save server image
+        run: |
+          docker save sandboxfusion-server-arm64:latest | gzip > sandboxfusion-server-arm64.tar.gz
+
+      - name: Upload server image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandboxfusion-server-arm64
+          path: sandboxfusion-server-arm64.tar.gz
+          retention-days: 7
+
+      - name: Show image info
+        run: |
+          docker images | grep sandboxfusion
+          docker run --platform linux/arm64 --rm sandboxfusion-server-arm64:latest echo "Build completed successfully!"
