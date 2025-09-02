@@ -1,5 +1,8 @@
 FROM ubuntu:20.04
 
+# 构建参数，用于控制是否使用国内镜像源
+ARG USE_CHINA_MIRRORS=false
+
 COPY ./scripts/tuna-apt.sh ./scripts/tuna-apt.sh
 ENV DEBIAN_FRONTEND=noninteractive
 # ARM64 优化：限制并发数和内存使用
@@ -21,11 +24,18 @@ COPY ./scripts/install-miniconda.sh ./scripts/install-miniconda.sh
 RUN sed -i 's/\r$//' ./scripts/install-miniconda.sh && chmod +x ./scripts/install-miniconda.sh \
     && bash ./scripts/install-miniconda.sh 3.11
 ENV PATH="/root/miniconda3/bin:${PATH}"
-# 使用国际镜像源，适用于GitHub Actions
-RUN echo "channels:" > ~/.condarc && \
-    echo "  - defaults" >> ~/.condarc && \
-    echo "  - conda-forge" >> ~/.condarc && \
-    pip config set global.index-url https://pypi.org/simple/
+# 根据构建参数配置镜像源
+RUN if [ "$USE_CHINA_MIRRORS" = "true" ]; then \
+        echo "Using China mirrors for faster domestic access" && \
+        wget https://veml.tos-cn-beijing.volces.com/condarc -O ~/.condarc && \
+        pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/; \
+    else \
+        echo "Using international mirrors for GitHub Actions build" && \
+        echo "channels:" > ~/.condarc && \
+        echo "  - defaults" >> ~/.condarc && \
+        echo "  - conda-forge" >> ~/.condarc && \
+        pip config set global.index-url https://pypi.org/simple/; \
+    fi
 RUN curl -sSL https://install.python-poetry.org | POETRY_VERSION=1.7.0 python3 -
 ENV PATH=/root/.local/bin:$PATH
 
@@ -173,7 +183,11 @@ COPY ./runtime/python ./runtime/python
 # 安装Qt开发工具以支持PyQt5在ARM64上的编译
 RUN apt-get update && apt-get install -y qt5-qmake qtbase5-dev qtbase5-dev-tools \
     && cd ./runtime/python && sed -i 's/\r$//' install-python-runtime.sh && chmod +x install-python-runtime.sh \
-    && timeout 1800 bash install-python-runtime.sh \
+    && if [ "$USE_CHINA_MIRRORS" = "true" ]; then \
+        timeout 1800 bash install-python-runtime.sh; \
+    else \
+        timeout 1800 bash install-python-runtime.sh us; \
+    fi \
     || echo "Python runtime installation timed out or failed, continuing..."
 # fix pyqt error, see https://github.com/NVlabs/instant-ngp/discussions/300
 ENV QT_QPA_PLATFORM=offscreen
@@ -189,6 +203,19 @@ RUN poetry config virtualenvs.create false \
     && timeout 600 npm ci \
     && timeout 600 npm run build \
     || echo "Poetry/npm installation timed out or failed, continuing..."
+
+# 创建镜像源配置脚本，供国内用户运行时使用
+RUN echo '#!/bin/bash' > /usr/local/bin/setup-china-mirrors.sh && \
+    echo '# 配置阿里云镜像源，供国内用户使用' >> /usr/local/bin/setup-china-mirrors.sh && \
+    echo 'echo "channels:" > ~/.condarc' >> /usr/local/bin/setup-china-mirrors.sh && \
+    echo 'echo "  - https://mirrors.aliyun.com/anaconda/pkgs/main/" >> ~/.condarc' >> /usr/local/bin/setup-china-mirrors.sh && \
+    echo 'echo "  - https://mirrors.aliyun.com/anaconda/pkgs/free/" >> ~/.condarc' >> /usr/local/bin/setup-china-mirrors.sh && \
+    echo 'echo "  - https://mirrors.aliyun.com/anaconda/pkgs/r/" >> ~/.condarc' >> /usr/local/bin/setup-china-mirrors.sh && \
+    echo 'echo "  - https://mirrors.aliyun.com/anaconda/pkgs/pro/" >> ~/.condarc' >> /usr/local/bin/setup-china-mirrors.sh && \
+    echo 'echo "  - https://mirrors.aliyun.com/anaconda/cloud/conda-forge/" >> ~/.condarc' >> /usr/local/bin/setup-china-mirrors.sh && \
+    echo 'pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/' >> /usr/local/bin/setup-china-mirrors.sh && \
+    echo 'echo "已配置阿里云镜像源，提升国内网络下载速度"' >> /usr/local/bin/setup-china-mirrors.sh && \
+    chmod +x /usr/local/bin/setup-china-mirrors.sh
 
 RUN useradd -m app && echo 'app:app' | chpasswd \
     && chmod og+rx /root \
