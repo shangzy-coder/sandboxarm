@@ -69,15 +69,16 @@ jobs:
       - name: Load base image
         run: |
           docker load < sandboxfusion-base-arm64.tar.gz
+          docker images | grep sandboxfusion
 
       - name: Build server image
         working-directory: ./SandboxFusion
         run: |
-          docker buildx build \
-            --platform linux/arm64 \
+          # 使用普通docker build而不是buildx，因为基础镜像在本地
+          docker build \
             -f scripts/Dockerfile.server.arm64 \
             -t sandboxfusion-server-arm64:latest \
-            . --load
+            .
 
       - name: Test server image
         run: |
