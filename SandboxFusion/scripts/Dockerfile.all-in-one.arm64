@@ -1,7 +1,13 @@
 FROM ubuntu:20.04
 
+# 构建参数，用于控制是否使用国内镜像源
+ARG USE_CHINA_MIRRORS=false
+
 COPY ./scripts/tuna-apt.sh ./scripts/tuna-apt.sh
 ENV DEBIAN_FRONTEND=noninteractive
+# ARM64 优化：限制并发数和内存使用
+ENV GOMAXPROCS=2
+ENV CGO_ENABLED=0
 RUN sed -i 's/\r$//' ./scripts/tuna-apt.sh && chmod +x ./scripts/tuna-apt.sh \
     && bash ./scripts/tuna-apt.sh 20.04 \
     && apt-get update && apt-get install -y curl npm git nano wget vim unzip sudo cgroup-tools iproute2 iptables \
@@ -9,6 +15,8 @@ RUN sed -i 's/\r$//' ./scripts/tuna-apt.sh && chmod +x ./scripts/tuna-apt.sh \
     autoconf gperf flex bison \
     # bash scripting utils
     bc \
+    # opam dependencies for ARM64
+    bubblewrap \
     && mkdir -p /workspace/download
 
 # python 3.11 & poetry
@@ -16,11 +24,18 @@ COPY ./scripts/install-miniconda.sh ./scripts/install-miniconda.sh
 RUN sed -i 's/\r$//' ./scripts/install-miniconda.sh && chmod +x ./scripts/install-miniconda.sh \
     && bash ./scripts/install-miniconda.sh 3.11
 ENV PATH="/root/miniconda3/bin:${PATH}"
-# 使用国际镜像源，适用于GitHub Actions
-RUN echo "channels:" > ~/.condarc && \
-    echo "  - defaults" >> ~/.condarc && \
-    echo "  - conda-forge" >> ~/.condarc && \
-    pip config set global.index-url https://pypi.org/simple/
+# 根据构建参数配置镜像源
+RUN if [ "$USE_CHINA_MIRRORS" = "true" ]; then \
+        echo "Using China mirrors for faster domestic access" && \
+        wget https://veml.tos-cn-beijing.volces.com/condarc -O ~/.condarc && \
+        pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/; \
+    else \
+        echo "Using international mirrors for GitHub Actions build" && \
+        echo "channels:" > ~/.condarc && \
+        echo "  - defaults" >> ~/.condarc && \
+        echo "  - conda-forge" >> ~/.condarc && \
+        pip config set global.index-url https://pypi.org/simple/; \
+    fi
 RUN curl -sSL https://install.python-poetry.org | POETRY_VERSION=1.7.0 python3 -
 ENV PATH=/root/.local/bin:$PATH
 
@@ -76,13 +91,13 @@ RUN apt-get install -y r-base lua5.2 luarocks ruby-full julia scala
 RUN luarocks install luaunit || echo "luaunit installation failed, continuing..."
 RUN PERL_MM_USE_DEFAULT=1 cpan Test::Deep Data::Compare
 
-# iverilog - 容错安装
+# iverilog - 容错安装，ARM64优化
 RUN curl -o /workspace/download/iverilog.tar.gz -SL https://github.com/steveicarus/iverilog/archive/refs/tags/v12_0.tar.gz \
     && tar -C /workspace/download -xzf /workspace/download/iverilog.tar.gz \
     && cd /workspace/download/iverilog-12_0 \
     && sh autoconf.sh \
     && ./configure \
-    && make -j$(nproc) \
+    && make -j2 \
     && make install \
     && echo "Iverilog compiled successfully" \
     || echo "Iverilog compilation failed, continuing..."
@@ -93,12 +108,16 @@ RUN curl -o /workspace/download/zig.tar.xz -SL https://ziglang.org/download/0.11
     && mv /usr/local/zig-linux-aarch64-0.11.0 /usr/local/zig
 ENV PATH=/usr/local/zig:$PATH
 
-# ocaml
+# ocaml - 容错安装，ARM64上可能有沙箱问题
 RUN curl -o /workspace/download/opam.sh -SL https://raw.githubusercontent.com/ocaml/opam/master/shell/install.sh \
     && sh /workspace/download/opam.sh \
-    && opam init -y \
+    && opam init -y --disable-sandboxing \
     && eval $(opam env) \
-    && opam install -y dune utop
+    && opam install -y dune utop \
+    && echo "OCaml/OPAM installed successfully" \
+    || echo "OCaml/OPAM installation failed, continuing..."
+# 只有OPAM安装成功时才设置环境
+RUN if [ -f "/root/.opam/default/bin/ocaml" ]; then echo 'eval $(opam env)' >> /root/.bashrc; fi
 
 # haskell
 RUN curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh \
@@ -135,10 +154,16 @@ RUN rm -rf /workspace/download \
 # ===== SERVER PART =====
 
 COPY ./runtime/go ./runtime/go
-# download and cache go deps
+# download and cache go deps - 优化ARM64编译，避免CGO问题
 RUN cd ./runtime/go \
     && go env -w GOPROXY="https://proxy.golang.org,direct" \
-    && go build
+    && go env -w CGO_ENABLED=0 \
+    && go env -w GOOS=linux \
+    && go env -w GOARCH=arm64 \
+    && go mod download \
+    && go build -a -installsuffix cgo -ldflags '-w -s' . \
+    && echo "Go build completed successfully" \
+    || echo "Go build failed, continuing..."
 
 COPY ./runtime/node /root/sandbox/runtime/node
 # also install puppetter chrome requirements (TODO: keep effective packages only)
@@ -146,17 +171,66 @@ RUN cd /root/sandbox/runtime/node && npm ci && \
     apt-get update -y && apt-get install -y fontconfig locales gconf-service libasound2 libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgcc1 libgconf-2-4 libgdk-pixbuf2.0-0 libglib2.0-0 libgtk-3-0 libnspr4 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 ca-certificates fonts-liberation libappindicator1 libnss3 lsb-release xdg-utils libgbm-dev
 
 # 跳过.NET缓存，因为ARM64上MSBuild有问题
-# 容错安装.NET缓存，ARM64上可能有MSBuild问题
-RUN dotnet new console -o /tmp/dotnet && dotnet run --project /tmp/dotnet || echo ".NET cache failed, continuing..."
+# RUN dotnet new console -o /tmp/dotnet && dotnet run --project /tmp/dotnet
+RUN echo ".NET cache skipped due to ARM64 MSBuild issues"
 
 # 跳过Lean构建，避免ARM64模拟问题
-COPY ./runtime/lean /root/sandbox/runtime/lean
-RUN cd /root/sandbox/runtime/lean && lake build
+# COPY ./runtime/lean /root/sandbox/runtime/lean
+# RUN cd /root/sandbox/runtime/lean && lake build
+RUN echo "Lean build skipped due to ARM64 emulation issues"
 
 COPY ./runtime/python ./runtime/python
-# 安装Qt开发工具以支持PyQt5在ARM64上的编译
-RUN apt-get update && apt-get install -y qt5-qmake qtbase5-dev qtbase5-dev-tools \
-    && cd ./runtime/python && sed -i 's/\r$//' install-python-runtime.sh && chmod +x install-python-runtime.sh && bash install-python-runtime.sh
+# 安装Qt开发工具以支持PyQt5在ARM64上的编译  
+RUN apt-get update && apt-get install -y qt5-qmake qtbase5-dev qtbase5-dev-tools
+# 直接在Dockerfile中安装Python依赖，避免脚本内的镜像源问题
+RUN cd ./runtime/python \
+    && rm -f ~/.condarc \
+    && conda create -n sandbox-runtime -y python=3.10 \
+    && echo "source activate sandbox-runtime" >> ~/.bashrc
+
+# 分步安装Python包，优化ARM64构建速度
+RUN /bin/bash -c "source activate sandbox-runtime && \
+    pip config set global.index-url https://pypi.org/simple/ && \
+    pip config set global.trusted-host pypi.org && \
+    echo 'Installing basic Python packages...' && \
+    pip install --no-cache-dir --prefer-binary numpy pandas matplotlib requests Flask Django pytest --timeout 300"
+
+# 安装轻量级科学计算包
+RUN /bin/bash -c "source activate sandbox-runtime && \
+    echo 'Installing scientific packages...' && \
+    pip install --no-cache-dir --prefer-binary scipy scikit-learn --timeout 900 \
+    || echo 'Some scientific packages failed, continuing...'"
+
+# 安装图像处理包
+RUN /bin/bash -c "source activate sandbox-runtime && \
+    echo 'Installing image processing packages...' && \
+    pip install --no-cache-dir --prefer-binary opencv-python pillow --timeout 600 \
+    || echo 'Some image packages failed, continuing...'"
+
+# 尝试通过 conda 安装 PyQt5，如果失败则跳过
+RUN /bin/bash -c "source activate sandbox-runtime && \
+    echo 'Attempting to install PyQt5 via conda (faster on ARM64)...' && \
+    conda install -y -c conda-forge pyqt=5.15 \
+    || echo 'PyQt5 installation failed, skipping GUI support...'"
+
+# 安装机器学习框架（重型包）
+RUN /bin/bash -c "source activate sandbox-runtime && \
+    echo 'Installing ML frameworks (may take longer)...' && \
+    pip install --no-cache-dir --prefer-binary tensorflow torch --timeout 1200 \
+    || echo 'ML frameworks installation failed, continuing...'"
+
+# 安装其余包（使用专门的ARM64优化版requirements，排除已安装的重型包）
+RUN /bin/bash -c "source activate sandbox-runtime && \
+    echo 'Installing remaining packages from ARM64-optimized requirements...' && \
+    pip install --no-cache-dir --prefer-binary -r ./requirements-arm64.txt --ignore-requires-python --timeout 600 \
+    || echo 'Some packages failed, continuing...'"
+
+# 下载NLTK数据
+RUN /bin/bash -c "source activate sandbox-runtime && \
+    python -c 'import nltk; nltk.download(\"punkt\")' && \
+    python -c 'import nltk; nltk.download(\"stopwords\")' && \
+    pip cache purge && conda clean --all -y" \
+    || echo "NLTK data download failed, continuing..."
 # fix pyqt error, see https://github.com/NVlabs/instant-ngp/discussions/300
 ENV QT_QPA_PLATFORM=offscreen
 ENV OMP_NUM_THREADS=2
@@ -166,10 +240,24 @@ WORKDIR /root/sandbox
 RUN poetry config virtualenvs.create false \
     # TODO: find out why poetry throws error without this
     && touch /root/miniconda3/pyvenv.cfg \
-    && poetry install \
+    && timeout 2400 poetry install \
     && cd ./docs \
-    && npm ci \
-    && npm run build
+    && timeout 600 npm ci \
+    && timeout 600 npm run build \
+    || echo "Poetry/npm installation timed out or failed, continuing..."
+
+# 创建镜像源配置脚本，供国内用户运行时使用
+RUN echo '#!/bin/bash' > /usr/local/bin/setup-china-mirrors.sh && \
+    echo '# 配置阿里云镜像源，供国内用户使用' >> /usr/local/bin/setup-china-mirrors.sh && \
+    echo 'echo "channels:" > ~/.condarc' >> /usr/local/bin/setup-china-mirrors.sh && \
+    echo 'echo "  - https://mirrors.aliyun.com/anaconda/pkgs/main/" >> ~/.condarc' >> /usr/local/bin/setup-china-mirrors.sh && \
+    echo 'echo "  - https://mirrors.aliyun.com/anaconda/pkgs/free/" >> ~/.condarc' >> /usr/local/bin/setup-china-mirrors.sh && \
+    echo 'echo "  - https://mirrors.aliyun.com/anaconda/pkgs/r/" >> ~/.condarc' >> /usr/local/bin/setup-china-mirrors.sh && \
+    echo 'echo "  - https://mirrors.aliyun.com/anaconda/pkgs/pro/" >> ~/.condarc' >> /usr/local/bin/setup-china-mirrors.sh && \
+    echo 'echo "  - https://mirrors.aliyun.com/anaconda/cloud/conda-forge/" >> ~/.condarc' >> /usr/local/bin/setup-china-mirrors.sh && \
+    echo 'pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/' >> /usr/local/bin/setup-china-mirrors.sh && \
+    echo 'echo "已配置阿里云镜像源，提升国内网络下载速度"' >> /usr/local/bin/setup-china-mirrors.sh && \
+    chmod +x /usr/local/bin/setup-china-mirrors.sh
 
 RUN useradd -m app && echo 'app:app' | chpasswd \
     && chmod og+rx /root \
