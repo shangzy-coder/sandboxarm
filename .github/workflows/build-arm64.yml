@@ -13,7 +13,8 @@ on:
 
 jobs:
   build-base:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm64  # 使用原生ARM64运行器
+    timeout-minutes: 360  # 6小时超时
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -21,10 +22,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
+      # 不需要QEMU，因为使用原生ARM64运行器
 
       - name: Build base image
         working-directory: ./SandboxFusion
@@ -53,7 +51,7 @@ jobs:
 
   build-server:
     needs: build-base
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm64  # 使用原生ARM64运行器
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -61,10 +59,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
+      # 不需要QEMU，因为使用原生ARM64运行器
 
       - name: Download base image artifact
         uses: actions/download-artifact@v4
