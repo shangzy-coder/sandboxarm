@@ -51,20 +51,24 @@ ENV PATH=/usr/local/kotlin/kotlinc/bin:$PATH
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH=/root/.cargo/bin:$PATH
 
-# swift
+# swift - 容错安装，下载失败则跳过
 RUN curl -o /workspace/download/swift.tar.gz -SL https://download.swift.org/swift-5.9.1-release/ubuntu2004-aarch64/swift-5.9.1-RELEASE-ubuntu20.04-aarch64.tar.gz \
     && tar -C /usr/local -xzf /workspace/download/swift.tar.gz \
-    && mv /usr/local/swift-5.9.1-RELEASE-ubuntu20.04-aarch64 /usr/local/swift
-ENV PATH=/usr/local/swift/bin:$PATH
+    && mv /usr/local/swift-5.9.1-RELEASE-ubuntu20.04-aarch64 /usr/local/swift \
+    && echo "Swift installed successfully" \
+    || echo "Swift installation failed, continuing without Swift..."
+# 只有Swift安装成功时才设置PATH
+RUN if [ -d "/usr/local/swift/bin" ]; then echo 'export PATH=/usr/local/swift/bin:$PATH' >> /root/.bashrc; fi
 
-# openssl
+# openssl - 容错安装，编译失败则跳过
 RUN curl -o /workspace/download/openssl.tar.gz -SL https://www.openssl.org/source/openssl-3.1.4.tar.gz \
     && tar -C /workspace/download -xzf /workspace/download/openssl.tar.gz \
     && cd /workspace/download/openssl-3.1.4 \
     && ./Configure --prefix=/usr/bin/openssl --openssldir=/usr/bin/openssl \
     && make -j$(nproc) \
-    && make install
-ENV PATH=/usr/bin/openssl:$PATH
+    && make install \
+    && echo "OpenSSL compiled successfully" \
+    || echo "OpenSSL compilation failed, using system OpenSSL..."
 
 # R, lua, ruby, julia, perl, scala
 RUN apt-get install -y r-base lua5.2 luarocks ruby-full julia scala
@@ -72,14 +76,16 @@ RUN apt-get install -y r-base lua5.2 luarocks ruby-full julia scala
 RUN luarocks install luaunit || echo "luaunit installation failed, continuing..."
 RUN PERL_MM_USE_DEFAULT=1 cpan Test::Deep Data::Compare
 
-# iverilog
+# iverilog - 容错安装
 RUN curl -o /workspace/download/iverilog.tar.gz -SL https://github.com/steveicarus/iverilog/archive/refs/tags/v12_0.tar.gz \
     && tar -C /workspace/download -xzf /workspace/download/iverilog.tar.gz \
     && cd /workspace/download/iverilog-12_0 \
     && sh autoconf.sh \
     && ./configure \
     && make -j$(nproc) \
-    && make install
+    && make install \
+    && echo "Iverilog compiled successfully" \
+    || echo "Iverilog compilation failed, continuing..."
 
 # zig
 RUN curl -o /workspace/download/zig.tar.xz -SL https://ziglang.org/download/0.11.0/zig-linux-aarch64-0.11.0.tar.xz \
@@ -99,7 +105,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh \
     && echo 'source /root/.ghcup/env' >> /root/.bashrc
 ENV PATH=/root/.cabal/bin:/root/.ghcup/bin:$PATH
 
-# erlang & elixir
+# erlang & elixir - 容错安装
 RUN curl -o /workspace/download/erlang.tar.gz -SL https://github.com/erlang/otp/releases/download/OTP-26.1.2/otp_src_26.1.2.tar.gz \
     && tar -C /workspace/download -xzf /workspace/download/erlang.tar.gz \
     && cd /workspace/download/otp_src_26.1.2 \
@@ -107,8 +113,11 @@ RUN curl -o /workspace/download/erlang.tar.gz -SL https://github.com/erlang/otp/
     && make -j$(nproc) \
     && make install \
     && curl -o /workspace/download/elixir.zip -SL https://github.com/elixir-lang/elixir/releases/download/v1.15.7/elixir-otp-26.zip \
-    && unzip /workspace/download/elixir.zip -d /usr/local/elixir
-ENV PATH=/usr/local/elixir/bin:$PATH
+    && unzip /workspace/download/elixir.zip -d /usr/local/elixir \
+    && echo "Erlang & Elixir installed successfully" \
+    || echo "Erlang & Elixir installation failed, continuing..."
+# 只有安装成功时才设置PATH
+RUN if [ -d "/usr/local/elixir/bin" ]; then echo 'export PATH=/usr/local/elixir/bin:$PATH' >> /root/.bashrc; fi
 
 # fortran
 RUN apt-get install -y gfortran
@@ -167,4 +176,4 @@ RUN useradd -m app && echo 'app:app' | chpasswd \
     && mkdir -p /mnt \
     && chmod og+rwx /mnt
 
-CMD bash /root/sandbox/scripts/run.sh
+CMD ["bash", "/root/sandbox/scripts/run.sh"]
