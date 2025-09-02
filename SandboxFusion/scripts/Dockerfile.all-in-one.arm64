@@ -188,23 +188,41 @@ RUN cd ./runtime/python \
     && conda create -n sandbox-runtime -y python=3.10 \
     && echo "source activate sandbox-runtime" >> ~/.bashrc
 
-# 分步安装Python包，避免PyQt5等重型包导致超时
+# 分步安装Python包，优化ARM64构建速度
 RUN /bin/bash -c "source activate sandbox-runtime && \
     pip config set global.index-url https://pypi.org/simple/ && \
     pip config set global.trusted-host pypi.org && \
     echo 'Installing basic Python packages...' && \
     pip install --no-cache-dir --prefer-binary numpy pandas matplotlib requests Flask Django pytest --timeout 300"
 
-# 安装编译型包，增加超时时间
+# 安装轻量级科学计算包
 RUN /bin/bash -c "source activate sandbox-runtime && \
-    echo 'Installing compiled packages (may take longer on ARM64)...' && \
-    pip install --no-cache-dir --prefer-binary PyQt5 opencv-python scipy scikit-learn --timeout 600 \
-    || echo 'Some compiled packages failed, continuing...'"
+    echo 'Installing scientific packages...' && \
+    pip install --no-cache-dir --prefer-binary scipy scikit-learn --timeout 900 \
+    || echo 'Some scientific packages failed, continuing...'"
 
-# 安装其余包
+# 安装图像处理包
 RUN /bin/bash -c "source activate sandbox-runtime && \
-    echo 'Installing remaining packages...' && \
-    pip install --no-cache-dir --prefer-binary -r ./requirements.txt --ignore-requires-python --timeout 300 \
+    echo 'Installing image processing packages...' && \
+    pip install --no-cache-dir --prefer-binary opencv-python pillow --timeout 600 \
+    || echo 'Some image packages failed, continuing...'"
+
+# 尝试通过 conda 安装 PyQt5，如果失败则跳过
+RUN /bin/bash -c "source activate sandbox-runtime && \
+    echo 'Attempting to install PyQt5 via conda (faster on ARM64)...' && \
+    conda install -y -c conda-forge pyqt=5.15 \
+    || echo 'PyQt5 installation failed, skipping GUI support...'"
+
+# 安装机器学习框架（重型包）
+RUN /bin/bash -c "source activate sandbox-runtime && \
+    echo 'Installing ML frameworks (may take longer)...' && \
+    pip install --no-cache-dir --prefer-binary tensorflow torch --timeout 1200 \
+    || echo 'ML frameworks installation failed, continuing...'"
+
+# 安装其余包（使用专门的ARM64优化版requirements，排除已安装的重型包）
+RUN /bin/bash -c "source activate sandbox-runtime && \
+    echo 'Installing remaining packages from ARM64-optimized requirements...' && \
+    pip install --no-cache-dir --prefer-binary -r ./requirements-arm64.txt --ignore-requires-python --timeout 600 \
     || echo 'Some packages failed, continuing...'"
 
 # 下载NLTK数据
