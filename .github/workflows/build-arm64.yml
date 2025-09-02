@@ -13,7 +13,7 @@ on:
 
 jobs:
   build-base:
-    runs-on: ubuntu-24.04-arm64  # 使用原生ARM64运行器
+    runs-on: ubuntu-24.04-arm  # 使用原生ARM64运行器
     timeout-minutes: 360  # 6小时超时
     steps:
       - name: Checkout code
@@ -51,7 +51,7 @@ jobs:
 
   build-server:
     needs: build-base
-    runs-on: ubuntu-24.04-arm64  # 使用原生ARM64运行器
+    runs-on: ubuntu-24.04-arm  # 使用原生ARM64运行器
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
