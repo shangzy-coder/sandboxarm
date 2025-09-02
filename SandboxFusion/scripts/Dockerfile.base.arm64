@@ -64,9 +64,10 @@ RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain 1.76.0
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # R, lua, ruby, julia, perl, scala
-RUN apt-get install -y r-base lua5.2 luarocks ruby-full julia scala \
-    && luarocks install luaunit \
-    && PERL_MM_USE_DEFAULT=1 cpan Test::Deep Data::Compare
+RUN apt-get install -y r-base lua5.2 luarocks ruby-full julia scala
+# 容错安装luaunit，失败则跳过
+RUN luarocks install luaunit || echo "luaunit installation failed, continuing..."
+RUN PERL_MM_USE_DEFAULT=1 cpan Test::Deep Data::Compare
 
 # D - 跳过安装，因为ARM64支持有限且网络问题
 # RUN wget https://netcologne.dl.sourceforge.net/project/d-apt/files/d-apt.list -O /etc/apt/sources.list.d/d-apt.list \
