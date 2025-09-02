@@ -1,0 +1,65 @@
+name: Build SandboxFusion ARM64 (Simple)
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'SandboxFusion/**'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'SandboxFusion/**'
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build-complete:
+    runs-on: ubuntu-24.04-arm  # 使用原生ARM64运行器
+    timeout-minutes: 480  # 8小时超时
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build complete SandboxFusion image
+        working-directory: ./SandboxFusion
+        run: |
+          echo "🚀 开始构建完整的SandboxFusion ARM64镜像..."
+          docker build \
+            -f scripts/Dockerfile.all-in-one.arm64 \
+            -t sandboxfusion-complete-arm64:latest \
+            .
+
+      - name: Test complete image
+        run: |
+          echo "🧪 测试镜像功能..."
+          docker run --rm sandboxfusion-complete-arm64:latest echo "✅ SandboxFusion ARM64 image works!"
+          echo "🔧 测试各种运行时..."
+          docker run --rm sandboxfusion-complete-arm64:latest go version
+          docker run --rm sandboxfusion-complete-arm64:latest python --version
+          docker run --rm sandboxfusion-complete-arm64:latest node --version
+
+      - name: Save complete image
+        run: |
+          echo "💾 保存镜像为artifact..."
+          docker save sandboxfusion-complete-arm64:latest | gzip > sandboxfusion-complete-arm64.tar.gz
+          echo "📊 压缩后大小:"
+          ls -lh sandboxfusion-complete-arm64.tar.gz
+
+      - name: Upload complete image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandboxfusion-complete-arm64
+          path: sandboxfusion-complete-arm64.tar.gz
+          retention-days: 7
+
+      - name: Show build summary
+        run: |
+          echo "✅ 构建完成!"
+          echo "📦 完整的SandboxFusion ARM64镜像已准备好下载"
+          echo "🔧 镜像信息:"
+          docker images sandboxfusion-complete-arm64:latest
+          echo ""
+          echo "📥 下载方式:"
+          echo "1. 在GitHub Actions页面下载artifact"
+          echo "2. 解压: gunzip sandboxfusion-complete-arm64.tar.gz"
+          echo "3. 加载: docker load < sandboxfusion-complete-arm64.tar"
+          echo "4. 运行: docker run -it sandboxfusion-complete-arm64:latest"

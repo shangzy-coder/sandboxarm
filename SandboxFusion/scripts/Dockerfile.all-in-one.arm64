@@ -1,0 +1,173 @@
+FROM ubuntu:20.04
+
+COPY ./scripts/tuna-apt.sh ./scripts/tuna-apt.sh
+ENV DEBIAN_FRONTEND=noninteractive
+RUN sed -i 's/\r$//' ./scripts/tuna-apt.sh && chmod +x ./scripts/tuna-apt.sh \
+    && bash ./scripts/tuna-apt.sh 20.04 \
+    && apt-get update && apt-get install -y curl npm git nano wget vim unzip sudo cgroup-tools iproute2 iptables \
+    # iverilog build deps
+    autoconf gperf flex bison \
+    # bash scripting utils
+    bc \
+    && mkdir -p /workspace/download
+
+# python 3.11 & poetry
+COPY ./scripts/install-miniconda.sh ./scripts/install-miniconda.sh
+RUN sed -i 's/\r$//' ./scripts/install-miniconda.sh && chmod +x ./scripts/install-miniconda.sh \
+    && bash ./scripts/install-miniconda.sh 3.11
+ENV PATH="/root/miniconda3/bin:${PATH}"
+# 使用国际镜像源，适用于GitHub Actions
+RUN echo "channels:" > ~/.condarc && \
+    echo "  - defaults" >> ~/.condarc && \
+    echo "  - conda-forge" >> ~/.condarc && \
+    pip config set global.index-url https://pypi.org/simple/
+RUN curl -sSL https://install.python-poetry.org | POETRY_VERSION=1.7.0 python3 -
+ENV PATH=/root/.local/bin:$PATH
+
+# golang 1.23.3 ARM64
+RUN curl -o /workspace/download/go.tar.gz -SL https://go.dev/dl/go1.23.3.linux-arm64.tar.gz \
+    && tar -C /usr/local -xzf /workspace/download/go.tar.gz
+ENV PATH=/usr/local/go/bin:$PATH
+
+# nodejs 20.x
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs
+
+# dotnet 8.0
+RUN wget https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb \
+    && dpkg -i packages-microsoft-prod.deb \
+    && apt-get update \
+    && apt-get install -y dotnet-sdk-8.0
+
+# lean 4
+RUN curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y
+ENV PATH=/root/.elan/bin:$PATH
+
+# kotlin
+RUN curl -o /workspace/download/kotlin.zip -SL https://github.com/JetBrains/kotlin/releases/download/v1.9.20/kotlin-compiler-1.9.20.zip \
+    && unzip /workspace/download/kotlin.zip -d /usr/local \
+    && mv /usr/local/kotlinc /usr/local/kotlin
+ENV PATH=/usr/local/kotlin/kotlinc/bin:$PATH
+
+# rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH=/root/.cargo/bin:$PATH
+
+# swift
+RUN curl -o /workspace/download/swift.tar.gz -SL https://download.swift.org/swift-5.9.1-release/ubuntu2004-aarch64/swift-5.9.1-RELEASE-ubuntu20.04-aarch64.tar.gz \
+    && tar -C /usr/local -xzf /workspace/download/swift.tar.gz \
+    && mv /usr/local/swift-5.9.1-RELEASE-ubuntu20.04-aarch64 /usr/local/swift
+ENV PATH=/usr/local/swift/bin:$PATH
+
+# openssl
+RUN curl -o /workspace/download/openssl.tar.gz -SL https://www.openssl.org/source/openssl-3.1.4.tar.gz \
+    && tar -C /workspace/download -xzf /workspace/download/openssl.tar.gz \
+    && cd /workspace/download/openssl-3.1.4 \
+    && ./Configure --prefix=/usr/bin/openssl --openssldir=/usr/bin/openssl \
+    && make -j$(nproc) \
+    && make install
+ENV PATH=/usr/bin/openssl:$PATH
+
+# R, lua, ruby, julia, perl, scala
+RUN apt-get install -y r-base lua5.2 luarocks ruby-full julia scala
+# 容错安装luaunit，失败则跳过
+RUN luarocks install luaunit || echo "luaunit installation failed, continuing..."
+RUN PERL_MM_USE_DEFAULT=1 cpan Test::Deep Data::Compare
+
+# iverilog
+RUN curl -o /workspace/download/iverilog.tar.gz -SL https://github.com/steveicarus/iverilog/archive/refs/tags/v12_0.tar.gz \
+    && tar -C /workspace/download -xzf /workspace/download/iverilog.tar.gz \
+    && cd /workspace/download/iverilog-12_0 \
+    && sh autoconf.sh \
+    && ./configure \
+    && make -j$(nproc) \
+    && make install
+
+# zig
+RUN curl -o /workspace/download/zig.tar.xz -SL https://ziglang.org/download/0.11.0/zig-linux-aarch64-0.11.0.tar.xz \
+    && tar -C /usr/local -xf /workspace/download/zig.tar.xz \
+    && mv /usr/local/zig-linux-aarch64-0.11.0 /usr/local/zig
+ENV PATH=/usr/local/zig:$PATH
+
+# ocaml
+RUN curl -o /workspace/download/opam.sh -SL https://raw.githubusercontent.com/ocaml/opam/master/shell/install.sh \
+    && sh /workspace/download/opam.sh \
+    && opam init -y \
+    && eval $(opam env) \
+    && opam install -y dune utop
+
+# haskell
+RUN curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh \
+    && echo 'source /root/.ghcup/env' >> /root/.bashrc
+ENV PATH=/root/.cabal/bin:/root/.ghcup/bin:$PATH
+
+# erlang & elixir
+RUN curl -o /workspace/download/erlang.tar.gz -SL https://github.com/erlang/otp/releases/download/OTP-26.1.2/otp_src_26.1.2.tar.gz \
+    && tar -C /workspace/download -xzf /workspace/download/erlang.tar.gz \
+    && cd /workspace/download/otp_src_26.1.2 \
+    && ./configure \
+    && make -j$(nproc) \
+    && make install \
+    && curl -o /workspace/download/elixir.zip -SL https://github.com/elixir-lang/elixir/releases/download/v1.15.7/elixir-otp-26.zip \
+    && unzip /workspace/download/elixir.zip -d /usr/local/elixir
+ENV PATH=/usr/local/elixir/bin:$PATH
+
+# fortran
+RUN apt-get install -y gfortran
+
+# clojure
+RUN curl -o /workspace/download/clojure.sh -SL https://download.clojure.org/install/linux-install-1.11.1.1413.sh \
+    && chmod +x /workspace/download/clojure.sh \
+    && /workspace/download/clojure.sh
+
+# cleanup
+RUN rm -rf /workspace/download \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# ===== SERVER PART =====
+
+COPY ./runtime/go ./runtime/go
+# download and cache go deps
+RUN cd ./runtime/go \
+    && go env -w GOPROXY="https://proxy.golang.org,direct" \
+    && go build
+
+COPY ./runtime/node /root/sandbox/runtime/node
+# also install puppetter chrome requirements (TODO: keep effective packages only)
+RUN cd /root/sandbox/runtime/node && npm ci && \
+    apt-get update -y && apt-get install -y fontconfig locales gconf-service libasound2 libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgcc1 libgconf-2-4 libgdk-pixbuf2.0-0 libglib2.0-0 libgtk-3-0 libnspr4 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 ca-certificates fonts-liberation libappindicator1 libnss3 lsb-release xdg-utils libgbm-dev
+
+# 跳过.NET缓存，因为ARM64上MSBuild有问题
+# RUN dotnet new console -o /tmp/dotnet && dotnet run --project /tmp/dotnet
+RUN echo ".NET cache skipped due to ARM64 MSBuild issues"
+
+# 跳过Lean构建，避免ARM64模拟问题
+# COPY ./runtime/lean /root/sandbox/runtime/lean
+# RUN cd /root/sandbox/runtime/lean && lake build
+RUN echo "Lean build skipped due to ARM64 emulation issues"
+
+COPY ./runtime/python ./runtime/python
+# 安装Qt开发工具以支持PyQt5在ARM64上的编译
+RUN apt-get update && apt-get install -y qt5-qmake qtbase5-dev qtbase5-dev-tools \
+    && cd ./runtime/python && sed -i 's/\r$//' install-python-runtime.sh && chmod +x install-python-runtime.sh && bash install-python-runtime.sh
+# fix pyqt error, see https://github.com/NVlabs/instant-ngp/discussions/300
+ENV QT_QPA_PLATFORM=offscreen
+ENV OMP_NUM_THREADS=2
+
+COPY ./ /root/sandbox
+WORKDIR /root/sandbox
+RUN poetry config virtualenvs.create false \
+    # TODO: find out why poetry throws error without this
+    && touch /root/miniconda3/pyvenv.cfg \
+    && poetry install \
+    && cd ./docs \
+    && npm ci \
+    && npm run build
+
+RUN useradd -m app && echo 'app:app' | chpasswd \
+    && chmod og+rx /root \
+    && mkdir -p /mnt \
+    && chmod og+rwx /mnt
+
+CMD bash /root/sandbox/scripts/run.sh
